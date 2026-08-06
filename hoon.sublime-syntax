@@ -1,0 +1,76 @@
+%YAML 1.2
+---
+# Hoon syntax highlighting for Typst (syntect / .sublime-syntax format).
+# Translated from pkova/hoon-grammar (TextMate grammar used by GitHub Linguist).
+name: Hoon
+file_extensions:
+  - hoon
+scope: source.hoon
+
+contexts:
+  main:
+    # comment  ::  to end of line
+    - match: '::'
+      scope: punctuation.definition.comment.hoon
+      push:
+        - meta_scope: comment.line.double-colon.hoon
+        - match: '$'
+          pop: true
+
+    # doqbloq  """ ... """
+    - match: '\s*"""'
+      push:
+        - meta_scope: string.quoted.double.block.hoon
+        - match: '\s*"""'
+          pop: true
+
+    # soqbloq  ''' ... '''
+    - match: "\\s*'''"
+      push:
+        - meta_scope: string.quoted.single.block.hoon
+        - match: "\\s*'''"
+          pop: true
+
+    # tape  "..."
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.hoon
+        - match: '\\.'
+          scope: constant.character.escape.hoon
+        - match: '"'
+          pop: true
+
+    # cord  '...'
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.hoon
+        - match: '\\.'
+          scope: constant.character.escape.hoon
+        - match: "'"
+          pop: true
+
+    # arm reference  foo=
+    - match: '[a-z]([a-z0-9-]*[a-z0-9])?(?=\=)'
+      scope: constant.character.hoon
+
+    # arm definition  ++  foo   /   +-  foo
+    - match: '\+[-+]  (?=[a-z]([a-z0-9-]*[a-z0-9])?)'
+      push:
+        - meta_content_scope: entity.name.function.hoon
+        - match: '(?![a-z0-9-])'
+          pop: true
+
+    # cube  %foo
+    - match: '%[a-z]([a-z0-9-]*[a-z0-9])?'
+      scope: constant.character.hoon
+
+    # aura  @ud  @t  @  (and bare *)
+    - match: '@(?:[a-z0-9-]*[a-z0-9])?|\*'
+      scope: storage.type.hoon
+
+    # runes
+    # note: `$:` is only the buccol rune when followed by whitespace or `(`
+    # (its wide form `$:(...)`). `$:term` is the buc wing `$` via tisgal
+    # (`=<($ term)`), so it must NOT match as a rune here.
+    - match: '\.[\^\+\*=\?]|![><:\.=\?!]|=[>|:,\.\-\^<+;/~\*\?]|\?[>|:\.\-\^<\+&~=@!]|\|[\$_%:\.\-\^~\*=@\?]|\+[|\$\+\*]|:[_\-\^\+~\*]|%[_:\.\-\^\+~\*=]|\^[|:\.\-\+&~\*=\?]|\$:(?![a-z])|\$[|_%<>\-\^&~@=\?]|;[:<\+;\/~\*=]|~[>|\$_%<\+\/&=\?!]|--|=='
+      scope: keyword.control.hoon
