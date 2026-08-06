@@ -1,1 +1,1 @@
-Article on new SKA for USTJ. Will work on it intermittently.
+Article on new SKA for USTJ, which should be published around September this year.
