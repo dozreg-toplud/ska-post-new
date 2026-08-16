@@ -124,13 +124,13 @@ If $bb(G)$ could be represented as a simple product of socks, and if the chain w
 
 To make sure that the iteration chain is actually finite, we need to be able to detect recursive calls to add pessimizations to them. Without that, a simple tail-recursive Nock expression that produces a list of nouns could be reevaluated on each fixed-point iteration because its product changed. Simple recursion like in that example is detected as follows: for a given Nock 2 eval, if its subject nests under the subject of one of its transitive callers with the same formula, we assume that the Nock 2 call in question is a recursive call to that transitive caller, and its #Datum is returned to the caller with the product replaced with a fully unknown sock with no provenance.
 
-Masking the product this way keeps the chain finite, but it costs us strict monotonicity of $cal(F)$: a call that one iteration treats as recursive may, on a later iteration, no longer satisfy the recursion condition, at which point it returns $#Datum""_bot$ instead --- a strictly smaller value that shrinks the recorded code usage rather than growing it. In practice this appears to be harmless, because once a call stops being recognized as recursive it never becomes recursive again. The recursion classification therefore only ever moves in one direction, providing another kind of monotonicity that is still enough for the chain to converge.
+Masking the product this way keeps the chain finite, but it costs us the strict monotonicity of $cal(F)$ over the subjects and results of SKA-functions: a call that one iteration treats as recursive may, on a later iteration, no longer satisfy the recursion condition, at which point it returns $#Datum""_bot$ instead --- a strictly smaller value that shrinks the recorded code usage rather than growing it. However, once the transitive caller is no longer classified as a recursion target, it is removed from the finite set of potential recursion targets, so such non-monotone steps can occur only finitely many times and the iteration still converges.
 
 === Cons denormalization
 
 Another avenue for infinite Kleene chains is the dynamic generation of Nock code to eval. Since Nock 3, 4, and 5 return unknown results, the only way to synthesize a new formula is to cons existing ones together.
 
-The prevention strategy is simple: a consed noun may not be used as a formula in its entirety --- only the components that were consed into it may. This bounds the executable formulas to the finitely many subtrees already present in the subject-formula pair.
+The prevention strategy is simple: a consed noun as a whole may never be used as a formula --- only the components that were consed into it may. This bounds the executable formulas to the finitely many subtrees already present in the subject-formula pair, making the set of possible SKA-functions it generates finite.
 
 === Homeomorphic embedding <sec-he>
 
@@ -148,8 +148,8 @@ Here `t` is a trap that accumulates previous values of `t` in its payload. Each 
 To prevent this, when two calls are checked for simple recursion (that is, whether their subjects straightforwardly nest) and turn out not to be simply recursive, we also check whether the caller's subject is homeomorphically embedded into the callee's (a termination criterion borrowed from online partial evaluation @leuschel-he): $"caller" lt.closed.eq "callee"$, defined as follows:
 
   - for every #Sock $a$: $a lt.closed.eq a$
-  - _Coupling_ rule: if $a$ and $b$ are #Sock cells and $"Head"(a) lt.closed.eq "Head"(b) and "Tail"(a) lt.closed.eq "Tail"(b)$, then $a lt.closed.eq b$
-  - _Diving_ rule: if $b$ is a #Sock cell and $a lt.closed.eq "Head"(b) or a lt.closed.eq "Tail"(b)$, then $a lt.closed.eq b$
+  - _Coupling_ rule: if $a$ and $b$ are #Sock cells and $"Head"(a) lt.closed.eq "Head"(b) "and" "Tail"(a) lt.closed.eq "Tail"(b)$, then $a lt.closed.eq b$
+  - _Diving_ rule: if $b$ is a #Sock cell and $a lt.closed.eq "Head"(b) "or" a lt.closed.eq "Tail"(b)$, then $a lt.closed.eq b$
 
 When homeomorphic embedding is detected, the callee's subject is replaced with the most specific generalization (MSG) of the two subjects --- the most specific sock that both subjects nest under, which keeps the data where the two agree and masks it out where they differ --- effectively erasing the accumulating part.
 
