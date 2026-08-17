@@ -1,0 +1,131 @@
+\documentclass[twoside]{article}
+
+\usepackage{ustj}
+
+\usepackage{tikz}
+\newcommand{\bit}[1]{%
+  \tikz[baseline=(char.base)]{%
+    \node[shape=rectangle, draw, rounded corners=1pt, inner sep=1pt, minimum width=6pt, minimum height=6pt] (char) {#1};
+  }%
+}
+
+\addbibresource{mss.bib}
+
+\newcommand{\authorname}{K. Afonin}
+\newcommand{\authorpatp}{\patp{dozreg-toplud}}
+\newcommand{\affiliation}{Urbit Foundation}
+
+%  Make first page footer:
+\fancypagestyle{firststyle}{%
+\fancyhf{}% Clear header/footer
+\fancyhead{}
+\fancyfoot[L]{{\footnotesize
+              %% We toggle between these:
+              % Manuscript submitted for review.\\
+              {\it Urbit Systems Technical Journal} III:1 (2026):  43–67. \\
+              ~ \\
+              Address author correspondence to \authorpatp.
+              }}
+}
+%  Arrange subsequent pages:
+\fancyhf{}
+\fancyhead[LE]{{\urbitfont Urbit Systems Technical Journal}}
+\fancyhead[RO]{Subject Knowledge Analysis}
+\fancyfoot[LE,RO]{\thepage}
+
+%%MANUSCRIPT
+\title{Nock Compilation\\(Subject Knowledge Analysis II)}
+\author{\authorname~\authorpatp \\ \affiliation}
+\date{}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{firststyle}
+
+\begin{abstract}
+\sloppy
+The design choices for the Nock compilation pipeline, which has its roots in the Subject Knowledge Analysis (\textsc{ska}) work by Edward Amsden \patp{ritpub-sipsyl} and Joe Bryan \patp{master-morzod}, are presented here. In particular, I describe a call graph construction algorithm that greatly improves on the previous approach, and describe the shared data flow analysis and code generation step that produces linear static single-assignment code from a call graph of \textsc{ska}-functions with tree-shaped Nock code.
+\end{abstract}
+
+% We will adjust page numbering in final editing.
+\pagenumbering{arabic}
+\setcounter{page}{43}
+
+\tableofcontents
+
+\section{Introduction}
+
+\sloppy
+Nock, unlike conventional languages, does not have a notion of a ``code object", or a ``function", or any other construct that corresponds to known callable code.  The Nock 2 formula \texttt{[2 b c]}---and Nock 9 by extension, as it is just a macro over Nock 2---is the equivalent of \texttt{eval} in other languages and reduces like this \citep{nock4-spec}:
+
+\begin{lstlisting}[style=listingblock]
+*[a 2 b c]          *[*[a b] *[a c]]
+\end{lstlisting}
+
+\noindent
+That is, one evaluates \texttt{c} against the original subject \texttt{a} to obtain a formula, then reduce that formula with \texttt{*[a b]} as our new subject. Nock is expressive enough that \texttt{*[a c]} can be unknowable in the general case without actually running the code.
+
+But while it is unknowable in the general case, in practice we can almost always know in advance what formula will be evaluated. That is because in practice the formula-formula \texttt{c} is almost always:
+\begin{itemize}
+  \item A Nock 0, with the formula being pulled from the known subject (e.g. desugaring of Nock 9); or
+  \item A Nock 1, with the formula being a constant/quoted value (i.e. \texttt{`|-`} loops, where the formula does not come from the subject but is instead quoted into the outer formula).
+\end{itemize}
+\noindent
+This fact allows us to introduce the notion of a \emph{\ssc{ska}-function} object, which is identified by a Nock formula and a masked subject. \textsc{ska} stands for Subject Knowledge Analysis, the name of the call graph construction algorithm for Nock developed by Edward Amsden \patp{ritpub-sipsyl} and Joe Bryan \patp{master-morzod}.\footnote{See \patp{dozreg-toplud}, ``Subject Knowledge Analysis,'' \emph{Urbit Systems Technical Journal} volume 3 issue 1, pp.~43--67.} In this paper, \textsc{ska} (in the spirit of notation abuse) will mean both the call graph construction algorithm for Nock and the overall compilation pipeline. The mask includes only the code that could be used by the \textsc{ska}-function, either by itself or transitively by its callees --- that is, the subset of the subject's noun structure that the function and its callees might actually reference. A \textsc{ska}-function can use any Nock operations, including raw Nock 2 when \texttt{*[a c]} could not be deduced (an \emph{indirect} Nock call), but it can also call other \textsc{ska}-functions.
+
+Once the function call graph is obtained, the next step is to discover which parts of the subject are actually used as data by each function. Without it, each function would have to have a signature \lstinline[style=inlinecode]{(subject: noun -> noun)}, which would lead to unnecessary busywork when it comes to function calls---the entire subject of a callee would have to be consed up, for it to be deconstructed later by the callee.
+
+With that step done, the actual code generation for a \textsc{ska}-function can be performed on-demand, avoiding extra work for functions with total jets and functions that are never called.
+
+\section{Call graph construction}
+
+\subsection{Previous work and motivation for redesign}
+
+Multiple algorithms were developed by Edward Amsden \patp{ritpub-sipsyl} to construct the call graph from a subject-formula pair.\footnote{See \href{https://www.youtube.com/watch?v=z24zWdHfVfI}{\patp{ritpub-sipsyl} and \patp{master-morzod}, ``Subject Knowledge Analysis'', Urbit Lake Summit, \textasciitilde 2024.6.19}.} I took his latest implementation and constructed a similar algorithm \citep{ska-afonin}, whose primary characteristic was execution-order (i.e. depth-first) inference and traversal of the call graph. The traversal very closely resembled Tarjan's strongly connected component (\textsc{scc}) algorithm---where an \textsc{scc} is a maximal set of mutually-reachable nodes in the call graph---except the graph was inferred at the same time as it was traversed, and the assumptions made in an \textsc{scc} were validated upon returning from that \textsc{scc}. If any assumption was invalid, then the entire \textsc{scc} was reanalyzed with the assumption added into an exclusion list.
+
+As the implementation matured and was tested on more and more complex workloads, it became apparent that the validation and reanalysis approach was too costly: analysis time increased exponentially with the depth of the \textsc{scc} stack.  Independently of this problem, I examined the literature to figure out another fixed-point algorithm. This led me to the realization that the call graph itself can be expressed as a fixed point of a partial evaluation function.
+
+\subsection{Formal Design}
+
+Before the formal design, let me introduce two pieces of vocabulary. A \emph{partial evaluator} runs a formula as far as it can using only the information known statically, producing an unknown result otherwise. A \emph{fixed point} of a function is an input that the function maps to itself: we apply our analysis repeatedly until the result stops changing, and that stable result is the fixed point we are after.
+
+First, let me define the domain of the function whose fixed point we are going to find. It is going to be a mapping $\mathbb{G}: \; \textsc{Identity} \rightarrow \textsc{Datum}$, where:
+\begin{itemize}
+  \item  $\textsc{Identity}$ is a pair \mbox{$(\mathbf{more}: \mathtt{Sock}, \mathbf{formula}: \mathtt{Cell})$,} where $\mathtt{Sock}$ is a partial noun (a noun with some structure known and some left as unknown holes), $\mathbf{more}$ represents the entirety of the subject with which the eval was performed, and $\mathbf{formula}$ is a Nock formula that is being evaluated in this \textsc{ska}-function call.
+  \item  $\textsc{Datum}$ is the information necessary for the partial evaluation of the callers of the \textsc{ska}-function with the given $\textsc{Identity}$, which is at least: $\mathbf{less}: \mathtt{Sock}$ for a minimized subject, that includes only the parts that are used for eval by that SKA-function and its transitive callees; $\mathbf{product}: \mathtt{Sock}$ for the product of the SKA-function call; and $\mathbf{map}: \mathtt{Provenance}$, the location of the parts of the product in the subject, defined as:
+\end{itemize}
+
+\begin{align*}
+\textsc{Provenance:} \;&\mathtt{nil} \;|\; \mathtt{slot}(\texttt{a}: \textsc{Atom}) \;|\\
+& \mathtt{cons}(\mathtt{head}: \textsc{Provenance}, \mathtt{tail}: \textsc{Provenance})
+\end{align*}
+
+At a fixed point, a \textsc{ska}-function is identified with a pair $(\mathbf{less},\;\mathbf{formula})$, and each \textsc{Identity} entry corresponds to a \textsc{ska}-function call with arguments captured in $\mathbf{more}$.
+
+Let me now define the partial evaluator $cal(F): bb(G) -> bb(G)$, that for each #field("id"): #Identity partially evaluates #field("formula") against #field("more"), constructing new #field("dat"): #Datum for that #field("id"):
+
+  - Partial evaluation starts from the subject itself, tagged with the provenance #ctor("slot")\(1\) --- the subject sits at axis 1 of itself. From there every intermediate value carries a #Provenance that says which part of the subject it was taken from, or #ctor("nil") if it was not taken from the subject at all;
+  - The Nock formula is partially evaluated against the annotated subject:
+    - In cons case `[[b c] d]` head and tail are evaluated and the products are consed;
+    - Nock 0 produces the appropriate axis from the annotated subject, if present;
+    - Nock 1 produces a fully known sock with nil provenance;
+    - In Nock 3, 4, 5, 12 child formulas are evaluated and an empty product is produced;
+    - Nock 6 produces an intersection of values of both branches: the results are intersected on both #Sock values and the provenances;
+    - In Nock 7 the second child formula is evaluated against the product of the evaluation of the first child against the subject;
+    - In Nock 11 the product of the hinted formula is produced, and in dynamic case `[a 11 [b c] d]` the hint-formula is evaluated and its product is ignored;
+    - Nock 8 is desugared: `[8 p q] -> [7 [p 0 1] q]`;
+    - Nock 9 is desugared: `[9 p q] -> [2 [0 p] q]`;
+    - Finally, in Nock 2 the formula-formula is evaluated, and if its product is not known the call is considered to be indirect, and an empty product is returned. Otherwise, the subject of the callee is calculated and the appropriate #Datum is obtained: $bb(G)(#ctor("calleeSubject"), #field("formula"))$. The code usage mask of the current call is updated using the provenance of the callee's formula noun and the provenance of the callee's subject plus the code usage mask of the callee. Details like recursion detection are discussed in the #link(<sec-recursion>)[Recursion detection] section. The product is the #Sock from the callee's #Datum, with the provenance composed with the subject's provenance.
+
+Finally, the call graph is constructed by finding $#ctor("fix") cal(F)$: we build a chain $[bb(G)_bot, cal(F)(bb(G)_bot), cal(F)(cal(F)(bb(G)_bot)), ...]$ until it converges. $bb(G)_bot$ is a mapping $bb(G)$ such that for every #field("id"): #Identity, $bb(G)_bot (#field("id")) = $ #Datum$""_bot$, and #Datum$""_bot$ is the minimal #Datum for a function call: an unknown result with no provenance and empty #field("less"), as we assume no code is used.
+
+
+
+\section{Conclusion and future work}
+% \sloppy
+There appear to be two viable future directions for this project.  A short-term objective is a proper integration with the Vere runtime, such as making compiled \textsc{ska} bytecode caches {persistent} and integrating cold states of Vere and \textsc{ska}.  A longer-term direction would pursue \patp{ritpub-sipsyl}'s original vision by implementing \textsc{ssa ir} compilation, which would ameliorate \mbox{allocation} overhead caused by cell churning\footnote{Compare the rationale for the implementation of the \lstinline[style=inlinecode]{#} hax edit instruction in Nock 4K as explained by \patp{fodwyt-ragful}.  (See \patp{lagrev-nocfep} and \patp{sorreg-namtyv}, ``A Documentary History of the Nock Combinator Calculus'', \ssc{ustj} vol. 2 iss. 1, pp.~75–82, for historical context.)} during temporary core construction for calls and deconstruction to get function arguments.\tombstone
+
+\selectlanguage{USenglish}
+\printbibliography
+\end{document}
